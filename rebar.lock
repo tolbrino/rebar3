@@ -10,8 +10,8 @@
  {<<"parse_trans">>,{pkg,<<"parse_trans">>,<<"3.3.0">>},0},
  {<<"providers">>,{pkg,<<"providers">>,<<"1.7.0">>},0},
  {<<"relx">>,
-  {git,"https://github.com/erlware/relx.git",
-       {ref,"b7a8b7f26355ee42588dc39ed00780e368ffa741"}},
+  {git,"https://github.com/tolbrino/relx.git",
+       {ref,"be910d7ea2469ca3f904a830508ce1d7051de9ee"}},
   0},
  {<<"ssl_verify_fun">>,{pkg,<<"ssl_verify_fun">>,<<"1.1.3">>},0}]}.
 [
