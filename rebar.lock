@@ -10,7 +10,7 @@
  {<<"providers">>,{pkg,<<"providers">>,<<"1.7.0">>},0},
  {<<"relx">>,
   {git,"https://github.com/aeternity/relx.git",
-       {ref,"0ded31f14a378b9f9f6c96b5624069ae62eae36f"}},
+       {ref,"ebdcebf135dfe03bec3801e1e1fba0ab1e1b36d0"}},
   0},
  {<<"ssl_verify_fun">>,{pkg,<<"ssl_verify_fun">>,<<"1.1.3">>},0}]}.
 [
