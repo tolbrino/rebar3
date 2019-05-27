@@ -6,6 +6,10 @@ executors:
       - image: aeternity/builder
         user: builder
     working_directory: ~/src
+  infrastructure:
+    docker:
+      - image: aeternity/infrastructure:stable
+    working_directory: ~/src
 
 jobs:
   build:
@@ -20,3 +24,34 @@ jobs:
           command: ./rebar3 ct
       - store_artifacts:
           path: rebar3
+      - persist_to_workspace:
+          root: .
+          paths: [rebar3]
+  publish:
+    executor: infrastructure
+    steps:
+      - attach_workspace:
+          at: .
+      - run:
+          name: Upload release
+          command: |
+            /infrastructure/scripts/upload-github-release-assets.sh github_api_token=${GITHUB_API_TOKEN:?} \
+              owner=${CIRCLE_PROJECT_USERNAME} repo=${CIRCLE_PROJECT_REPONAME} \
+              tag=${CIRCLE_TAG} ASSETS=rebar3
+
+workflows:
+  build_publish:
+    jobs:
+      - build:
+          filters:
+            tags:
+              only: /.*/
+      - publish:
+          context: ae-library
+          requires:
+            - build
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /.*/
