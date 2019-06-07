@@ -36,6 +36,7 @@
          format_error/1]).
 
 -include("rebar.hrl").
+-include_lib("providers/include/providers.hrl").
 
 -define(PROVIDER, shell).
 -define(DEPS, [compile]).
@@ -87,6 +88,9 @@ init(State) ->
                         {start_clean, undefined, "start-clean", boolean,
                          "Cancel any applications in the 'apps' list "
                          "or release."},
+                        {env_file, undefined, "env-file", string,
+                         "Path to file of os environment variables to setup "
+                         "before expanding vars in config files."},
                         {user_drv_args, undefined, "user_drv_args", string,
                          "Arguments passed to user_drv start function for "
                          "creating custom shells."}]}
@@ -308,6 +312,7 @@ run_script_file(File) ->
     Result.
 
 maybe_boot_apps(State) ->
+    _ = maybe_set_env_vars(State),
     case find_apps_to_boot(State) of
         undefined ->
             %% try to read in sys.config file
@@ -503,7 +508,12 @@ find_config(State) ->
         no_value ->
             no_config;
         Filename when is_list(Filename) ->
-            rebar_file_utils:consult_config(State, Filename)
+            case is_src_config(Filename) of
+                false ->
+                    rebar_file_utils:consult_config(State, Filename);
+                true ->
+                    consult_env_config(State, Filename)
+            end
     end.
 
 -spec first_value([Fun], State) -> no_value | Value when
@@ -540,5 +550,108 @@ find_config_rebar(State) ->
 
 -spec find_config_relx(rebar_state:t()) -> [tuple()] | no_value.
 find_config_relx(State) ->
-    debug_get_value(sys_config, rebar_state:get(State, relx, []), no_value,
-                    "Found config from relx.").
+    %% The order in relx is to load the src version first;
+    %% we do the same.
+    RelxCfg = rebar_state:get(State, relx, []),
+    Src = debug_get_value(sys_config_src, RelxCfg, no_value,
+                          "Found config.src from relx."),
+    case Src of
+        no_value ->
+            debug_get_value(sys_config, RelxCfg, no_value,
+                            "Found config from relx.");
+        _ ->
+            Src
+    end.
+
+-spec is_src_config(file:filename()) -> boolean().
+is_src_config(Filename) ->
+    filename:extension(Filename) =:= ".src".
+
+-spec consult_env_config(rebar_state:t(), file:filename()) -> [[tuple()]].
+consult_env_config(State, Filename) ->
+    RawString = case file:read_file(Filename) of
+        {error, _} -> "[].";
+        {ok, Bin} -> unicode:characters_to_list(Bin)
+    end,
+    ReplacedStr = replace_env_vars(RawString),
+    case rebar_string:consult(unicode:characters_to_list(ReplacedStr)) of
+        {error, Reason} ->
+            throw(?PRV_ERROR({bad_term_file, Filename, Reason}));
+        [Terms] ->
+            rebar_file_utils:consult_config_terms(State, Terms)
+    end.
+
+maybe_set_env_vars(State) ->
+    EnvFile =debug_get_value(env_file, rebar_state:get(State, shell, []), undefined,
+                             "Found env_file from config."),
+    {Opts, _} = rebar_state:command_parsed_args(State),
+    EnvFile1 = debug_get_value(env_file, Opts, EnvFile,
+                               "Found env_file from command line option."),
+
+    case maybe_read_file(EnvFile1) of
+        ignore ->
+            ok;
+        {error, _} ->
+            ?WARN("Failed to read file with environment variables: ~p", [EnvFile1]);
+        {ok, Bin} ->
+            Lines = string:split(unicode:characters_to_list(Bin), "\n", all),
+            [handle_env_var_line(Line) || Line <- Lines]
+    end.
+
+handle_env_var_line(Line) ->
+    Trimmed = rebar_string:trim(Line, both, [$\s]),
+    %% ignore lines starting with # and
+    %% fail if there are spaces around =
+    case re:run(Trimmed, "^(?<key>[^#][^\s=]*)=(?<value>[^\s]\.*)",
+                [{capture, [key, value], list}, unicode]) of
+        {match, [Key, Value]} ->
+            os:putenv(Key, Value);
+        _ ->
+            case Trimmed of
+                [$# | _] -> ignore;
+                [] -> ignore;
+                Other ->
+                    ?WARN("Unable to parse environment variable from this line: ~ts", [Other])
+            end
+    end.
+
+maybe_read_file(undefined) ->
+    ignore;
+maybe_read_file(EnvFile) ->
+    file:read_file(EnvFile).
+
+%% @doc quick and simple variable substitution writeup.
+%% Supports `${varname}' but not `$varname' nor nested
+%% values such as `${my_${varname}}'.
+%% The variable are also defined as only supporting
+%% the form `[a-zA-Z_]+[a-zA-Z0-9_]*' as per the POSIX
+%% standard.
+-spec replace_env_vars(string()) -> unicode:charlist().
+replace_env_vars("") -> "";
+replace_env_vars("${" ++ Str) ->
+    case until_var_end(Str) of
+        {ok, VarName, Rest} ->
+            replace_varname(VarName) ++ replace_env_vars(Rest);
+        error ->
+            "${" ++ replace_env_vars(Str)
+    end;
+replace_env_vars([Char|Str]) ->
+    [Char | replace_env_vars(Str)].
+
+until_var_end(Str) ->
+    case re:run(Str, "([a-zA-Z_]+[a-zA-Z0-9_]*)}", [{capture, [1], list}]) of
+        nomatch ->
+            error;
+        {match, [Name]} ->
+            {ok, Name, drop_varname(Name, Str)}
+    end.
+
+replace_varname(Var) ->
+    %% os:getenv(Var, "") is only available in OTP-18.0
+    case os:getenv(Var) of
+        false -> "";
+        Val -> Val
+    end.
+
+drop_varname("", "}" ++ Str) -> Str;
+drop_varname([_|Var], [_|Str]) -> drop_varname(Var, Str).

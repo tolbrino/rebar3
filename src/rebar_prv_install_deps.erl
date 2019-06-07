@@ -206,10 +206,23 @@ maybe_lock(Profile, AppInfo, Seen, State, Level) ->
                 default ->
                     case sets:is_element(Name, Seen) of
                         false ->
+                            %% Check whether the currently existing lock is
+                            %% deeper than the current one (which can happen
+                            %% during an upgrade). If the current app is
+                            %% shallower than the existing lock, replace the
+                            %% existing lock. This prevents weird transient
+                            %% lock-tree states (which would self-heal on a
+                            %% later run) after a `rebar3 upgrade <app>'
+                            %% command when a deep dep switches lineages for
+                            %% another newer parent.
                             Locks = rebar_state:lock(State),
-                            case lists:any(fun(App) -> rebar_app_info:name(App) =:= Name end, Locks) of
-                                true ->
+                            case find_app_and_level_by_name(Locks, Name) of
+                                {ok, _App, LockLvl} when LockLvl =< Level ->
                                     {sets:add_element(Name, Seen), State};
+                                {ok, App, _LockLvl} ->
+                                    LockedApp = rebar_app_info:dep_level(AppInfo, Level),
+                                    {sets:add_element(Name, Seen),
+                                     rebar_state:lock(State, [LockedApp | Locks -- [App]])};
                                 false ->
                                     {sets:add_element(Name, Seen),
                                      rebar_state:lock(State, rebar_app_info:dep_level(AppInfo, Level))}
@@ -270,7 +283,7 @@ update_seen_dep(AppInfo, _Profile, _Level, Deps, Apps, State, Upgrade, Seen, Loc
                     %% meaning there is no conflict, so don't warn about it.
                     skip;
                 _ ->
-                    warn_skip_deps(Name, Source, State)
+                    warn_skip_deps(AppInfo, State)
             end;
         true ->
             ok
@@ -382,8 +395,7 @@ make_relative_to_root(State, Path) when is_list(Path) ->
     rebar_dir:make_relative_path(Path, Root).
 
 fetch_app(AppInfo, State) ->
-    ?INFO("Fetching ~ts (~p)", [rebar_app_info:name(AppInfo),
-                                rebar_resource_v2:format_source(rebar_app_info:source(AppInfo))]),
+    ?INFO("Fetching ~ts", [rebar_resource_v2:format_source(AppInfo)]),
     rebar_fetch:download_source(AppInfo, State).
 
 maybe_upgrade(AppInfo, _AppDir, Upgrade, State) ->
@@ -391,8 +403,7 @@ maybe_upgrade(AppInfo, _AppDir, Upgrade, State) ->
         true ->
             case rebar_fetch:needs_update(AppInfo, State) of
                 true ->
-                    ?INFO("Upgrading ~ts (~p)", [rebar_app_info:name(AppInfo),
-                                                 rebar_resource_v2:format_source(rebar_app_info:source(AppInfo))]),
+                    ?INFO("Upgrading ~ts", [rebar_resource_v2:format_source(AppInfo)]),
                     rebar_fetch:download_source(AppInfo, State);
                 false ->
                     case Upgrade of
@@ -407,11 +418,10 @@ maybe_upgrade(AppInfo, _AppDir, Upgrade, State) ->
             AppInfo
     end.
 
-warn_skip_deps(Name, Source, State) ->
-    Msg = "Skipping ~ts (from ~p) as an app of the same name "
+warn_skip_deps(AppInfo, State) ->
+    Msg = "Skipping ~ts as an app of the same name "
           "has already been fetched",
-    Args = [Name,
-            rebar_resource_v2:format_source(Source)],
+    Args = [rebar_resource_v2:format_source(AppInfo)],
     case rebar_state:get(State, deps_error_on_conflict, false) of
         false ->
             case rebar_state:get(State, deps_warning_on_conflict, true) of
@@ -426,3 +436,12 @@ not_needs_compile(App) ->
     not(rebar_app_info:is_checkout(App))
         andalso rebar_app_info:valid(App)
           andalso rebar_app_info:has_all_artifacts(App) =:= true.
+
+find_app_and_level_by_name([], _) ->
+    false;
+find_app_and_level_by_name([App|Apps], Name) ->
+    case rebar_app_info:name(App) of
+        Name -> {ok, App, rebar_app_info:dep_level(App)};
+        _ -> find_app_and_level_by_name(Apps, Name)
+    end.
+

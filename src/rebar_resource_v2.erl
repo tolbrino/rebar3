@@ -61,14 +61,20 @@ find_resource(Type, Resources) ->
 
 find_resource_state(Type, Resources) ->
     case lists:keyfind(Type, #resource.type, Resources) of
-        false ->            
+        false ->
             {error, not_found};
         #resource{state=State} ->
             State
     end.
 
-format_source({pkg, Name, Vsn, _Hash, _}) -> {pkg, Name, Vsn};
-format_source(Source) -> Source.
+format_source(AppInfo) ->
+    Name = rebar_app_info:name(AppInfo),
+    case rebar_app_info:source(AppInfo) of
+        {pkg, _Name, Vsn, _Hash, _} ->
+            io_lib:format("~ts v~s", [Name, Vsn]);
+        Source ->
+            io_lib:format("~ts (from ~p)", [Name, Source])
+    end.
 
 lock(AppInfo, State) ->
     resource_run(lock, rebar_app_info:source(AppInfo), [AppInfo], State).
@@ -95,7 +101,8 @@ needs_update(AppInfo, State) ->
     resource_run(needs_update, rebar_app_info:source(AppInfo), [AppInfo], State).
 
 %% this is a special case since it is used for project apps as well, not just deps
-make_vsn(AppInfo, VcsType, State) ->
+make_vsn(AppInfo, Vsn, State) ->
+    VcsType = case Vsn of {T, _} -> T; T -> T end,
     Resources = rebar_state:resources(State),
     case is_resource_type(VcsType, Resources) of
         true ->
