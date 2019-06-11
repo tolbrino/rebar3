@@ -59,7 +59,7 @@ list_templates(State) ->
 
 %% Expand a single template's value
 list_template(Files, {Name, Type, File}, State) ->
-    case consult(load_file(Files, Type, File)) of
+    case rebar_string:consult(binary_to_list(load_file(Files, Type, File))) of
         {error, Reason} ->
             {error, {consult, File, Reason}};
         TemplateTerms ->
@@ -158,11 +158,18 @@ drop_var_docs([{K,V}|Rest]) -> [{K,V} | drop_var_docs(Rest)].
 %% Load the template index, resolve all variables, and then execute
 %% the template.
 create({Template, Type, File}, Files, UserVars, Force, State) ->
-    TemplateTerms = consult(load_file(Files, Type, File)),
+    TemplateTerms = rebar_string:consult(binary_to_list(load_file(Files, Type, File))),
     Vars = drop_var_docs(override_vars(UserVars, get_template_vars(TemplateTerms, State))),
     maybe_warn_about_name(Vars),
     TemplateCwd = filename:dirname(File),
-    execute_template(TemplateTerms, Files, {Template, Type, TemplateCwd}, Vars, Force).
+    Result = execute_template(TemplateTerms, Files, {Template, Type, TemplateCwd}, Vars, Force),
+    maybe_print_final_message(proplists:get_value(message, TemplateTerms, undefined), Vars),
+    Result.
+
+maybe_print_final_message(undefined, _) ->
+    ok;
+maybe_print_final_message(Message, Values) ->
+    io:format("~s~n", [render(Message, Values)]).
 
 maybe_warn_about_name(Vars) ->
     Name = proplists:get_value(name, Vars, "valid"),
@@ -197,6 +204,9 @@ execute_template([{description, _} | Terms], Files, Template, Vars, Force) ->
     execute_template(Terms, Files, Template, Vars, Force);
 %% We can't execute variables
 execute_template([{variables, _} | Terms], Files, Template, Vars, Force) ->
+    execute_template(Terms, Files, Template, Vars, Force);
+%% We can't execute message
+execute_template([{message, _} | Terms], Files, Template, Vars, Force) ->
     execute_template(Terms, Files, Template, Vars, Force);
 %% Create a directory
 execute_template([{dir, Path} | Terms], Files, Template, Vars, Force) ->
@@ -393,31 +403,6 @@ load_file(_Files, plugin, Name) ->
 load_file(_Files, file, Name) ->
     {ok, Bin} = file:read_file(Name),
     Bin.
-
-%% Given a string or binary, parse it into a list of terms, ala file:consult/1
-consult(Str) when is_list(Str) ->
-    consult([], Str, []);
-consult(Bin) when is_binary(Bin)->
-    consult([], binary_to_list(Bin), []).
-
-consult(Cont, Str, Acc) ->
-    case erl_scan:tokens(Cont, Str, 0) of
-        {done, Result, Remaining} ->
-            case Result of
-                {ok, Tokens, _} ->
-                    case erl_parse:parse_term(Tokens) of
-                        {ok, Term} -> consult([], Remaining, [Term | Acc]);
-                        {error, Reason} -> {error, Reason}
-                    end;
-                {eof, _Other} ->
-                    lists:reverse(Acc);
-                {error, Info, _} ->
-                    {error, Info}
-            end;
-        {more, Cont1} ->
-            consult(Cont1, eof, Acc)
-    end.
-
 
 write_file(Output, Data, Force) ->
     %% determine if the target file already exists

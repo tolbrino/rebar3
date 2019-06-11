@@ -27,7 +27,7 @@ all() ->
      profile_deps, deps_build_in_prod, only_deps,
      override_deps, override_add_deps, override_del_deps,
      override_opts, override_add_opts, override_del_opts,
-     apply_overrides_exactly_once,
+     apply_overrides_exactly_once, override_only_deps,
      profile_override_deps, profile_override_add_deps, profile_override_del_deps,
      profile_override_opts, profile_override_add_opts, profile_override_del_opts,
      include_file_relative_to_working_directory, include_file_in_src,
@@ -40,7 +40,9 @@ all() ->
      always_recompile_when_erl_compiler_options_set,
      dont_recompile_when_erl_compiler_options_env_does_not_change,
      recompile_when_erl_compiler_options_env_changes,
-     rebar_config_os_var].
+     rebar_config_os_var,
+
+     app_file_linting].
 
 groups() ->
     [{basic_app, [], [build_basic_app, paths_basic_app, clean_basic_app]},
@@ -431,7 +433,6 @@ paths_release_apps(Config) ->
     [Vsn1, Vsn2] = ?config(vsns, Config),
 
     {ok, State} = rebar_test_utils:run_and_check(Config, [], ["compile"], return),
-
     code:add_paths(rebar_state:code_paths(State, all_deps)),
     ok = application:load(list_to_atom(Name1)),
     ok = application:load(list_to_atom(Name2)),
@@ -1441,10 +1442,11 @@ override_del_deps(Config) ->
     ).
 
 override_opts(Config) ->
-    AppDir = ?config(apps, Config),
+    AppsDir = ?config(apps, Config),
 
     Name = rebar_test_utils:create_random_name("app1_"),
     Vsn = rebar_test_utils:create_random_vsn(),
+    AppDir = filename:join([AppsDir, "apps", Name]),
     rebar_test_utils:create_app(AppDir, Name, Vsn, [kernel, stdlib]),
 
     RebarConfig = [
@@ -1459,12 +1461,12 @@ override_opts(Config) ->
         ]}
     ],
 
-    rebar_test_utils:create_config(AppDir, RebarConfig),
+    rebar_test_utils:create_config(AppsDir, RebarConfig),
 
     rebar_test_utils:run_and_check(
          Config, RebarConfig, ["compile"], {ok, [{app, Name}]}),
 
-    Path = filename:join([AppDir, "_build", "default", "lib", Name, "ebin"]),
+    Path = filename:join([AppsDir, "_build", "default", "lib", Name, "ebin"]),
     code:add_patha(Path),
 
     Mod = list_to_atom("not_a_real_src_" ++ Name),
@@ -1501,11 +1503,35 @@ apply_overrides_exactly_once(Config) ->
     rebar_test_utils:run_and_check(
       Config, RebarConfig, ["ct", "--compile_only"], {ok, [{app, Name}, {dep, "some_dep"}], "test"}).
 
-override_add_opts(Config) ->
+override_only_deps(Config) ->
     AppDir = ?config(apps, Config),
 
     Name = rebar_test_utils:create_random_name("app1_"),
     Vsn = rebar_test_utils:create_random_vsn(),
+    rebar_test_utils:create_app(AppDir, Name, Vsn, [kernel, stdlib]),
+
+    RebarConfig = [
+        {deps, []}, %% with deps enabled, this test fails
+        {overrides, [
+            {add, [
+                {erl_opts, [{d, bad, a}, {d, bad, b}]}
+            ]}
+        ]}
+    ],
+
+    rebar_test_utils:create_config(AppDir, RebarConfig),
+
+    rebar_test_utils:run_and_check(
+         Config, RebarConfig, ["compile"], {ok, [{app, Name}]}),
+
+    ok.
+
+override_add_opts(Config) ->
+    AppsDir = ?config(apps, Config),
+
+    Name = rebar_test_utils:create_random_name("app1_"),
+    Vsn = rebar_test_utils:create_random_vsn(),
+    AppDir = filename:join([AppsDir, "apps", Name]),
     rebar_test_utils:create_app(AppDir, Name, Vsn, [kernel, stdlib]),
 
     RebarConfig = [
@@ -1519,12 +1545,12 @@ override_add_opts(Config) ->
         ]}
     ],
 
-    rebar_test_utils:create_config(AppDir, RebarConfig),
+    rebar_test_utils:create_config(AppsDir, RebarConfig),
 
     rebar_test_utils:run_and_check(
          Config, RebarConfig, ["compile"], {ok, [{app, Name}]}),
 
-    Path = filename:join([AppDir, "_build", "default", "lib", Name, "ebin"]),
+    Path = filename:join([AppsDir, "_build", "default", "lib", Name, "ebin"]),
     code:add_patha(Path),
 
     Mod = list_to_atom("not_a_real_src_" ++ Name),
@@ -1533,10 +1559,11 @@ override_add_opts(Config) ->
     true = lists:member(warn_missing_spec, proplists:get_value(options, Mod:module_info(compile), [])).
 
 override_del_opts(Config) ->
-    AppDir = ?config(apps, Config),
+    AppsDir = ?config(apps, Config),
 
     Name = rebar_test_utils:create_random_name("app1_"),
     Vsn = rebar_test_utils:create_random_vsn(),
+    AppDir = filename:join([AppsDir, "apps", Name]),
     rebar_test_utils:create_app(AppDir, Name, Vsn, [kernel, stdlib]),
 
     RebarConfig = [
@@ -1551,18 +1578,19 @@ override_del_opts(Config) ->
         ]}
     ],
 
-    rebar_test_utils:create_config(AppDir, RebarConfig),
+    rebar_test_utils:create_config(AppsDir, RebarConfig),
 
     rebar_test_utils:run_and_check(
          Config, RebarConfig, ["compile"], {ok, [{app, Name}]}),
 
-    Path = filename:join([AppDir, "_build", "default", "lib", Name, "ebin"]),
+    Path = filename:join([AppsDir, "_build", "default", "lib", Name, "ebin"]),
     code:add_patha(Path),
 
     Mod = list_to_atom("not_a_real_src_" ++ Name),
 
     true = lists:member(compressed, proplists:get_value(options, Mod:module_info(compile), [])),
-    false = lists:member(warn_missing_spec, proplists:get_value(options, Mod:module_info(compile), [])).
+    false = lists:member(warn_missing_spec, proplists:get_value(options, Mod:module_info(compile), [])),
+    ok.
 
 profile_override_deps(Config) ->
     Deps = rebar_test_utils:expand_deps(git, [{"some_dep", "0.0.1", [{"other_dep", "0.0.1", []}]}]),
@@ -1664,10 +1692,11 @@ profile_override_del_deps(Config) ->
     ).
 
 profile_override_opts(Config) ->
-    AppDir = ?config(apps, Config),
+    AppsDir = ?config(apps, Config),
 
     Name = rebar_test_utils:create_random_name("app1_"),
     Vsn = rebar_test_utils:create_random_vsn(),
+    AppDir = filename:join([AppsDir, "apps", Name]),
     rebar_test_utils:create_app(AppDir, Name, Vsn, [kernel, stdlib]),
 
     RebarConfig = [
@@ -1686,12 +1715,12 @@ profile_override_opts(Config) ->
         ]}
     ],
 
-    rebar_test_utils:create_config(AppDir, RebarConfig),
+    rebar_test_utils:create_config(AppsDir, RebarConfig),
 
     rebar_test_utils:run_and_check(
          Config, RebarConfig, ["as", "a", "compile"], {ok, [{app, Name}]}),
 
-    Path = filename:join([AppDir, "_build", "a", "lib", Name, "ebin"]),
+    Path = filename:join([AppsDir, "_build", "a", "lib", Name, "ebin"]),
     code:add_patha(Path),
 
     Mod = list_to_atom("not_a_real_src_" ++ Name),
@@ -1700,10 +1729,11 @@ profile_override_opts(Config) ->
     false = lists:member(warn_missing_spec, proplists:get_value(options, Mod:module_info(compile), [])).
 
 profile_override_add_opts(Config) ->
-    AppDir = ?config(apps, Config),
+    AppsDir = ?config(apps, Config),
 
     Name = rebar_test_utils:create_random_name("app1_"),
     Vsn = rebar_test_utils:create_random_vsn(),
+    AppDir = filename:join([AppsDir, "apps", Name]),
     rebar_test_utils:create_app(AppDir, Name, Vsn, [kernel, stdlib]),
 
     RebarConfig = [
@@ -1721,12 +1751,12 @@ profile_override_add_opts(Config) ->
         ]}
     ],
 
-    rebar_test_utils:create_config(AppDir, RebarConfig),
+    rebar_test_utils:create_config(AppsDir, RebarConfig),
 
     rebar_test_utils:run_and_check(
          Config, RebarConfig, ["as", "a", "compile"], {ok, [{app, Name}]}),
 
-    Path = filename:join([AppDir, "_build", "a", "lib", Name, "ebin"]),
+    Path = filename:join([AppsDir, "_build", "a", "lib", Name, "ebin"]),
     code:add_patha(Path),
 
     Mod = list_to_atom("not_a_real_src_" ++ Name),
@@ -1735,10 +1765,11 @@ profile_override_add_opts(Config) ->
     true = lists:member(warn_missing_spec, proplists:get_value(options, Mod:module_info(compile), [])).
 
 profile_override_del_opts(Config) ->
-    AppDir = ?config(apps, Config),
+    AppsDir = ?config(apps, Config),
 
     Name = rebar_test_utils:create_random_name("app1_"),
     Vsn = rebar_test_utils:create_random_vsn(),
+    AppDir = filename:join([AppsDir, "apps", Name]),
     rebar_test_utils:create_app(AppDir, Name, Vsn, [kernel, stdlib]),
 
     RebarConfig = [
@@ -1757,18 +1788,19 @@ profile_override_del_opts(Config) ->
         ]}
     ],
 
-    rebar_test_utils:create_config(AppDir, RebarConfig),
+    rebar_test_utils:create_config(AppsDir, RebarConfig),
 
     rebar_test_utils:run_and_check(
          Config, RebarConfig, ["as", "a", "compile"], {ok, [{app, Name}]}),
 
-    Path = filename:join([AppDir, "_build", "a", "lib", Name, "ebin"]),
+    Path = filename:join([AppsDir, "_build", "a", "lib", Name, "ebin"]),
     code:add_patha(Path),
 
     Mod = list_to_atom("not_a_real_src_" ++ Name),
 
     true = lists:member(compressed, proplists:get_value(options, Mod:module_info(compile), [])),
-    false = lists:member(warn_missing_spec, proplists:get_value(options, Mod:module_info(compile), [])).
+    false = lists:member(warn_missing_spec, proplists:get_value(options, Mod:module_info(compile), [])),
+    ok.
 
 profile_deps(Config) ->
     Deps = rebar_test_utils:expand_deps(git, [{"some_dep", "0.0.1", [{"other_dep", "0.0.1", []}]}]),
@@ -2311,6 +2343,21 @@ regex_filter_regression(Config) ->
     rebar_test_utils:run_and_check(Config, RebarConfig, ["compile"],
                                    {ok, [{file, Expected}]}),
     ok.
+
+app_file_linting(Config) ->
+    meck:new(rebar_log, [no_link, passthrough]),
+    AppDir = ?config(apps, Config),
+    Name = rebar_test_utils:create_random_name("app_file_linting"),
+    Vsn = rebar_test_utils:create_random_vsn(),
+    rebar_test_utils:create_app(AppDir, Name, Vsn, [foo]),
+
+    _ = rebar_test_utils:run_and_check(Config, [], ["compile"], return),
+    History = meck:history(rebar_log),
+    Warnings = [{Str, Args} || {_, {rebar_log, log, [warn, Str, Args]}, _} <- History],
+
+    ?assert(none /= proplists:lookup("~p is missing description entry", Warnings)),
+    ?assert(none /= proplists:lookup("~p is missing kernel from applications list", Warnings)),
+    ?assert(none /= proplists:lookup("~p is missing stdlib from applications list", Warnings)).
 
 %%
 
